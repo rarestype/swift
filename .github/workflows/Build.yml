@@ -1,0 +1,117 @@
+name: Build
+
+on:
+    workflow_call:
+        inputs:
+            swift-release:
+                description: 'Swift release, such as 6.4.1-RELEASE'
+                required: true
+                type: string
+
+jobs:
+    #   builds the compiler and standard library, and packages the files that replace Apple’s
+    linux:
+        strategy:
+            matrix:
+                runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runs-on: ${{ matrix.runner }}
+        name: build (${{ matrix.runner }})
+        timeout-minutes: 360
+        env:
+            SWIFT_RELEASE: ${{ inputs.swift-release }}
+            GH_TOKEN: ${{ github.token }}
+        steps:
+            -   name: 💝 Checkout 💝
+                uses: actions/checkout@v6
+
+            -   name: 💝 Read pins 💝
+                run: |
+                    source "Releases/${SWIFT_RELEASE}"
+                    {
+                        echo "PATCHES<<EOF"
+                        echo "${PATCHES}"
+                        echo "EOF"
+                    } >> "$GITHUB_ENV"
+
+            -   name: 💝 Free disk 💝
+                run: |
+                    sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                        /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                        /usr/local/share/powershell /usr/local/share/chromium \
+                        /usr/local/lib/node_modules
+                    df -h /
+
+            -   name: 💝 Install dependencies 💝
+                run: |
+                    sudo apt-get update -q
+                    sudo apt-get -y -q install \
+                        build-essential cmake curl git gnupg icu-devtools \
+                        libc++-18-dev libc++abi-18-dev libcurl4-openssl-dev libedit-dev \
+                        libicu-dev libncurses-dev libpython3-dev libsqlite3-dev libxml2-dev \
+                        ninja-build pkg-config python3-six python3-pip \
+                        python3-pkg-resources python3-psutil python3-setuptools rsync swig \
+                        systemtap-sdt-dev tzdata uuid-dev zip
+
+            -   name: 💝 Install Swift 💝
+                uses: rarestype/swift-install-action@v1
+                with:
+                    swift-release: ${{ inputs.swift-release }}
+
+            -   name: 💝 Check out sources 💝
+                run: |
+                    sudo mkdir -p /workspace
+                    sudo chown "$(id -u):$(id -g)" /workspace
+                    Scripts/Checkout /workspace
+
+            -   name: 💝 Build 💝
+                run: Scripts/Build /workspace
+
+            -   name: 💝 Package 💝
+                run: |
+                    usr="$(dirname "$(dirname "$(readlink -f "$(command -v swift)")")")"
+                    Scripts/Package /workspace "$usr"
+
+            -   name: 💝 Compare with Apple’s toolchain 💝
+                run: |
+                    usr="$(dirname "$(dirname "$(readlink -f "$(command -v swift)")")")"
+                    Scripts/Compare stage/usr "$usr"
+
+            -   name: 💝 Upload 💝
+                uses: actions/upload-artifact@v7
+                with:
+                    name: swift-${{ runner.arch }}
+                    path: artifacts/*.tar.gz
+                    retention-days: 7
+                    compression-level: 0
+
+    #   installs the archive over Apple’s toolchain, as the images do, and runs the gate
+    test:
+        strategy:
+            matrix:
+                runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runs-on: ${{ matrix.runner }}
+        name: test (${{ matrix.runner }})
+        needs: linux
+        steps:
+            -   name: 💝 Checkout 💝
+                uses: actions/checkout@v6
+
+            -   name: 💝 Install Swift 💝
+                uses: rarestype/swift-install-action@v1
+                with:
+                    swift-release: ${{ inputs.swift-release }}
+
+            -   name: 💝 Download 💝
+                uses: actions/download-artifact@v7
+                with:
+                    name: swift-${{ runner.arch }}
+                    path: artifacts
+
+            -   name: 💝 Install over the toolchain 💝
+                run: |
+                    usr="$(dirname "$(dirname "$(readlink -f "$(command -v swift)")")")"
+                    tar -C "$(dirname "$usr")" -xzf artifacts/swift-*.tar.gz
+                    cat "$usr/share/swift/rarest-overlay.txt"
+
+            -   name: 💝 Test 💝
+                run: Scripts/Test

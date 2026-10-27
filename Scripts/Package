@@ -1,0 +1,70 @@
+#!/bin/bash
+# Packages the files of $1/install/usr that also exist in the toolchain at $2 (its `usr`), and
+# so would replace them, as `artifacts/swift-<release>-linux-<arch>.tar.gz`, which installs
+# over a toolchain’s `usr`. Files that Apple’s toolchain doesn’t have stay out, so the archive
+# never adds anything except its manifest.
+set -euo pipefail
+: "${SWIFT_RELEASE:?}"
+INSTALL="$1/install/usr"
+APPLE=$2
+ARCH="$(uname -m)"
+ROOT="$PWD"
+
+(cd "$INSTALL" && find . \( -type f -o -type l \) | sort) > ours.txt
+(cd "$APPLE" && find . \( -type f -o -type l \) | sort) > apple.txt
+comm -23 ours.txt apple.txt > ours-only.txt
+
+# Some installed files belong to other projects, and stay Apple’s:
+#
+# -   `lib/swift/host` holds what runs while compiling, outside the compiler: the swift-syntax
+#     libraries and the macro plugins, along with `swift-plugin-server`, which runs plugins.
+#     Apple builds the swift-syntax libraries in swift-syntax’s own build, and links the plugins
+#     differently, neither of which this build reproduces. The compiler’s own libraries, in
+#     `lib/swift/host/compiler`, are replaced.
+# -   `swift-driver` and `swift-help` come from the swift-driver project. This build only
+#     installs them because it builds with an early copy of the driver.
+grep -E '^\./lib/swift/host/|^\./bin/(swift-driver|swift-help|swift-plugin-server)$' ours.txt \
+    | grep -v '^\./lib/swift/host/compiler/' > others.txt || true
+
+# A path replaces Apple’s only if it is the same kind of file. Swift’s `compiler` component
+# installs `swift` and `swiftc` as links to the legacy driver, where Apple’s toolchain has the
+# real `swift-driver`, which must stay.
+: > overlay.txt
+: > mismatched.txt
+while IFS= read -r path; do
+    if [[ -L "$INSTALL/$path" && -L "$APPLE/$path" ]]; then
+        if [[ "$(readlink "$INSTALL/$path")" == "$(readlink "$APPLE/$path")" ]]; then
+            echo "$path" >> overlay.txt
+        else
+            echo "$path" >> mismatched.txt
+        fi
+    elif [[ ! -L "$INSTALL/$path" && ! -L "$APPLE/$path" ]]; then
+        echo "$path" >> overlay.txt
+    else
+        echo "$path" >> mismatched.txt
+    fi
+done < <(comm -12 ours.txt apple.txt | comm -23 - others.txt)
+
+echo "$(wc -l < overlay.txt) files replace Apple’s"
+echo "$(wc -l < ours-only.txt) are left out, since Apple’s toolchain doesn’t have them"
+echo "$(wc -l < others.txt) are left out, since they belong to other projects"
+echo "$(wc -l < mismatched.txt) are left out, since Apple’s are a different kind of file:"
+sed 's/^/    /' mismatched.txt
+
+stage="$ROOT/stage/usr"
+rm -rf "$ROOT/stage"
+mkdir -p "$stage/share/swift"
+(cd "$INSTALL" && tar -c -T "$ROOT/overlay.txt") | tar -x -C "$stage"
+
+{
+    echo "Swift ${SWIFT_RELEASE} with these upstream commits cherry-picked:"
+    while read -r repository commit; do
+        [[ -n "$repository" ]] && echo "    swiftlang/${repository}@${commit}"
+    done <<< "${PATCHES:-}"
+    echo "Built by ${GITHUB_SERVER_URL:-}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
+} > "$stage/share/swift/rarest-overlay.txt"
+
+mkdir -p "$ROOT/artifacts"
+tar -C "$ROOT/stage" \
+    --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \
+    -czf "$ROOT/artifacts/swift-${SWIFT_RELEASE}-linux-${ARCH}.tar.gz" usr

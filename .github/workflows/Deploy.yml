@@ -1,0 +1,72 @@
+name: Deploy
+
+permissions:
+    contents: write
+on:
+    workflow_dispatch:
+        inputs:
+            swift-release:
+                description: 'Swift release, such as 6.4.1-RELEASE'
+                required: true
+                type: string
+
+concurrency:
+    group: deploy-${{ inputs.swift-release }}
+    cancel-in-progress: false
+
+jobs:
+    build:
+        uses: ./.github/workflows/Build.yml
+        with:
+            swift-release: ${{ inputs.swift-release }}
+
+    publish:
+        runs-on: ubuntu-24.04
+        needs: build
+        env:
+            SWIFT_RELEASE: ${{ inputs.swift-release }}
+            GH_TOKEN: ${{ github.token }}
+        steps:
+            -   name: 💝 Checkout 💝
+                uses: actions/checkout@v6
+
+            -   name: 💝 Download 💝
+                uses: actions/download-artifact@v7
+                with:
+                    pattern: swift-*
+                    merge-multiple: true
+                    path: artifacts
+
+            -   name: 💝 Release 💝
+                run: |
+                    source "Releases/${SWIFT_RELEASE}"
+                    tag="swift-${SWIFT_RELEASE}-${GITHUB_SHA:0:9}"
+                    if gh release view "$tag" > /dev/null 2>&1; then
+                        echo "💔 Error: release ${tag} already exists, and releases are never replaced" >&2
+                        exit 1
+                    fi
+
+                    download="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
+                    {
+                        echo "Swift ${SWIFT_RELEASE}, with these upstream commits cherry-picked:"
+                        echo ""
+                        while read -r repository commit; do
+                            if [[ -n "$repository" ]]; then
+                                echo "- swiftlang/${repository}@${commit}"
+                            fi
+                        done <<< "$PATCHES"
+                        echo ""
+                        echo "| archive | checksum |"
+                        echo "| ------- | -------- |"
+                        for archive in artifacts/*.tar.gz; do
+                            name="${archive##*/}"
+                            echo "| [\`${name}\`](${download}/${name}) | \`$(sha256sum "$archive" | cut -d ' ' -f 1)\` |"
+                        done
+                        echo ""
+                        echo "Each archive replaces the compiler and standard library of Apple’s ${SWIFT_RELEASE} toolchain, when it is extracted over the toolchain’s \`usr\`."
+                    } > notes.md
+
+                    gh release create "$tag" artifacts/*.tar.gz \
+                        --target "$GITHUB_SHA" \
+                        --title "${SWIFT_RELEASE} ✰ ${GITHUB_SHA:0:9}" \
+                        --notes-file notes.md

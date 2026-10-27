@@ -1,0 +1,92 @@
+#!/bin/bash
+# Checks that the files in $1 (an overlay’s `usr`) can replace the same files in $2 (Apple’s
+# `usr`):
+#
+# 1.  The standard library and runtime, which both builds compile with the compiler they just
+#     built, export exactly the same symbols as Apple’s, and every module interface was compiled
+#     with the same flags.
+# 2.  With the overlay installed over a copy of Apple’s toolchain, every executable and library in
+#     it still finds every symbol it imports. This covers what the host compiler builds, such as
+#     `swift-frontend`, whose symbol tables depend on which host compiler built them; Apple’s
+#     were built by an older one.
+set -euo pipefail
+OVERLAY=$1
+APPLE=$2
+WORK="$(mktemp -d)"
+failures=0
+
+while IFS= read -r -d '' library; do
+    path="${library#"$OVERLAY"/}"
+    nm -D --defined-only "$library" | awk '{ print $NF }' | sort > "$WORK/ours.symbols"
+    nm -D --defined-only "$APPLE/$path" | awk '{ print $NF }' | sort > "$WORK/apple.symbols"
+    if ! cmp -s "$WORK/ours.symbols" "$WORK/apple.symbols"; then
+        echo "💔 ${path} exports different symbols:"
+        diff "$WORK/apple.symbols" "$WORK/ours.symbols" | head -10 || true
+        failures=$(( failures + 1 ))
+    fi
+done < <(find "$OVERLAY/lib/swift/linux" -name '*.so' -type f -print0)
+
+while IFS= read -r -d '' interface; do
+    path="${interface#"$OVERLAY"/}"
+    ours=$(grep -m 1 '^// swift-module-flags:' "$interface" || true)
+    apple=$(grep -m 1 '^// swift-module-flags:' "$APPLE/$path" || true)
+    if [[ "$ours" != "$apple" ]]; then
+        echo "💔 ${path} was compiled with different flags:"
+        echo "    Apple’s: ${apple}"
+        echo "    ours:    ${ours}"
+        failures=$(( failures + 1 ))
+    fi
+done < <(find "$OVERLAY" -name '*.swiftinterface' -type f -print0)
+
+# A runpath outside the toolchain would find libraries on the machine that built it, and nowhere
+# else; checking where they resolve would miss that on the build machine itself
+while IFS= read -r -d '' file; do
+    if [[ "$(head -c 4 "$file" | od -An -c | tr -d ' ')" != '177ELF' ]]; then
+        continue
+    fi
+    runpaths=$(readelf -d "$file" | sed -n 's/.*(R[UN]*PATH).*\[\(.*\)\]/\1/p' | tr ':' '\n')
+    while IFS= read -r runpath; do
+        if [[ -n "$runpath" && "$runpath" != '$ORIGIN'* ]]; then
+            echo "💔 ${file#"$OVERLAY"/} has a runpath outside the toolchain: ${runpath}"
+            failures=$(( failures + 1 ))
+        fi
+    done <<< "$runpaths"
+done < <(find "$OVERLAY" -type f -print0)
+
+# `ldd -r` lists the libraries that each file needs and can’t find, and the symbols that it
+# imports and nothing provides
+undefined() {
+    local usr=$1
+    find "$usr" -type f \( -perm -u+x -o -name '*.so' -o -name '*.so.*' \) -print0 \
+        | while IFS= read -r -d '' file; do
+            if [[ "$(head -c 4 "$file" | od -An -c | tr -d ' ')" != '177ELF' ]]; then
+                continue
+            fi
+            ldd -r "$file" 2>&1 \
+                | sed -n \
+                    -e "s|^undefined symbol: \([^ \t]*\).*|${file#"$usr"/} \1|p" \
+                    -e "s|^[[:space:]]*\([^ ]*\) => not found|${file#"$usr"/} needs \1|p" \
+                || true
+        done | sort -u
+}
+
+mkdir -p "$WORK/merged"
+cp -a "$APPLE" "$WORK/merged/usr"
+cp -a "$OVERLAY/." "$WORK/merged/usr/"
+undefined "$APPLE" > "$WORK/apple.undefined"
+undefined "$WORK/merged/usr" > "$WORK/merged.undefined"
+comm -13 "$WORK/apple.undefined" "$WORK/merged.undefined" > "$WORK/new.undefined"
+if [[ -s "$WORK/new.undefined" ]]; then
+    echo "💔 with the overlay installed, $(wc -l < "$WORK/new.undefined") imports no longer resolve:"
+    head -20 "$WORK/new.undefined"
+    failures=$(( failures + 1 ))
+fi
+echo "$(wc -l < "$WORK/apple.undefined") unresolved imports in Apple’s toolchain, \
+$(wc -l < "$WORK/merged.undefined") with the overlay"
+
+rm -rf "$WORK"
+if (( failures > 0 )); then
+    echo "💔 Error: the overlay can’t replace Apple’s files (${failures} problems)" >&2
+    exit 1
+fi
+echo "💖 the overlay can replace Apple’s files"
