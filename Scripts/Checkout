@@ -1,0 +1,33 @@
+#!/bin/bash
+# Checks out the sources of Swift $SWIFT_RELEASE into $1, without history, and cherry-picks the
+# commits in $PATCHES. A patch that the release already contains is an error, so that the pin
+# file never lists a patch that does nothing.
+set -euo pipefail
+: "${SWIFT_RELEASE:?}"
+SOURCES=$1
+TAG="swift-${SWIFT_RELEASE}"
+
+git clone --quiet --depth 1 --branch "$TAG" https://github.com/swiftlang/swift.git \
+    "$SOURCES/swift"
+"$SOURCES/swift/utils/update-checkout" \
+    --clone \
+    --skip-history \
+    --tag "$TAG" \
+    --skip-repository swift
+
+while read -r repository commit; do
+    if [[ -z "$repository" ]]; then
+        continue
+    fi
+    status=$(gh api "repos/swiftlang/${repository}/compare/${TAG}...${commit}" --jq .status)
+    if [[ "$status" != diverged && "$status" != ahead ]]; then
+        echo "💔 Error: ${TAG} already contains swiftlang/${repository}@${commit} (${status})" >&2
+        exit 1
+    fi
+    git -C "$SOURCES/$repository" fetch --quiet --depth 2 origin "$commit"
+    git -C "$SOURCES/$repository" \
+        -c user.name="rarest automation" \
+        -c user.email="automation@noreply.rarestype.com" \
+        cherry-pick -x "$commit"
+    echo "💖 cherry-picked swiftlang/${repository}@${commit}"
+done <<< "${PATCHES:-}"

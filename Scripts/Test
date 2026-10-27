@@ -1,0 +1,26 @@
+#!/bin/bash
+# Runs every reproducer in Tests/Reproducers, optimized, with the toolchain on the PATH, and
+# builds the macro package in Tests/Macros. A reproducer passes if it prints `ok`.
+set -euo pipefail
+failures=0
+
+swift --version
+for source in Tests/Reproducers/*.swift; do
+    name="$(basename "$source" .swift)"
+    swiftc -O -parse-as-library "$source" -o "$name"
+    output="$(./"$name")"
+    if [[ "$output" == ok ]]; then
+        echo "💖 ${name}"
+    else
+        echo "💔 ${name}: ${output}"
+        failures=$(( failures + 1 ))
+    fi
+done
+
+swift build --package-path Tests/Macros --product Probe
+echo "💖 macro plugins load"
+
+if (( failures > 0 )); then
+    echo "💔 Error: ${failures} reproducers failed" >&2
+    exit 1
+fi

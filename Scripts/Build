@@ -1,0 +1,23 @@
+#!/bin/bash
+# Builds the compiler and the standard library from the sources in $1, with the settings that
+# Apple’s `buildbot_linux,no_assertions` preset uses for them, and installs the components
+# that Apple’s toolchain ships into $1/install. Takes about three hours on a 4-core runner.
+set -euo pipefail
+SOURCES=$1
+
+# swift-install-action adds the host toolchain’s `usr/lib/swift` to these, where clang would
+# find the host’s shim module map beside the one being built, and fail with “redefinition of
+# module”
+unset CPLUS_INCLUDE_PATH C_INCLUDE_PATH OBJC_INCLUDE_PATH OBJCPLUS_INCLUDE_PATH CPATH
+
+"$SOURCES/swift/utils/build-script" \
+    --release \
+    --no-assertions \
+    --skip-build-benchmarks \
+    --build-swift-static-stdlib \
+    --build-swift-static-sdk-overlay \
+    --install-swift \
+    --swift-install-components='autolink-driver;compiler;clang-resource-dir-symlink;libexec;stdlib;swift-remote-mirror;sdk-overlay;static-mirror-lib;toolchain-tools;license;sourcekit-inproc' \
+    --install-prefix=/usr \
+    --install-destdir="$SOURCES/install" \
+    --jobs "$(nproc)"
