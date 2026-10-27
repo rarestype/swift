@@ -52,6 +52,15 @@ jobs:
                         python3-pkg-resources python3-psutil python3-setuptools rsync swig \
                         systemtap-sdt-dev tzdata uuid-dev zip
 
+            #   clang builds against the newest GCC’s libstdc++ it finds, and Apple’s toolchain was
+            #   built against GCC 13’s, which is Ubuntu 24.04’s own. The runner also has GCC 14,
+            #   whose template instantiations would show up among our libraries’ exported symbols
+            -   name: 💝 Remove newer GCCs 💝
+                run: |
+                    sudo apt-get -y -q purge libgcc-14-dev
+                    ls "/usr/lib/gcc/$(gcc -dumpmachine)"
+                    [[ "$(ls "/usr/lib/gcc/$(gcc -dumpmachine)" | sort -V | tail -1)" == 13 ]]
+
             -   name: 💝 Install Swift 💝
                 uses: rarestype/swift-install-action@v1
                 with:
