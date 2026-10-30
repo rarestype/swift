@@ -47,14 +47,19 @@ jobs:
                     fi
 
                     download="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
+                    patches=$(while read -r repository commit; do
+                        if [[ -n "$repository" ]]; then
+                            echo "- swiftlang/${repository}@${commit}"
+                        fi
+                    done <<< "$PATCHES")
                     {
-                        echo "Swift ${SWIFT_RELEASE}, with these upstream commits cherry-picked:"
-                        echo ""
-                        while read -r repository commit; do
-                            if [[ -n "$repository" ]]; then
-                                echo "- swiftlang/${repository}@${commit}"
-                            fi
-                        done <<< "$PATCHES"
+                        if [[ -n "$patches" ]]; then
+                            echo "Swift ${SWIFT_RELEASE}, with these upstream commits cherry-picked:"
+                            echo ""
+                            echo "$patches"
+                        else
+                            echo "Swift ${SWIFT_RELEASE}, as Apple released it, with no upstream commits cherry-picked."
+                        fi
                         echo ""
                         echo "| archive | checksum |"
                         echo "| ------- | -------- |"
