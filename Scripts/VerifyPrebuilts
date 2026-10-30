@@ -1,0 +1,62 @@
+#!/bin/bash
+# Checks the signed prebuilts the way a client sees them: the `swift-package` on the PATH, which
+# is ours, resolves a macro package against a local copy of prebuilts/, and must download and
+# unpack the prebuilt for this machine. It trusts only the root certificate built into it, or
+# the one at $PREBUILTS_ROOT_CERT if set.
+set -euo pipefail
+: "${SWIFT_SYNTAX_VERSIONS:?}"
+
+ROOT="$PWD"
+port=8089
+
+python3 -I -m http.server --bind 127.0.0.1 --directory prebuilts "$port" > server.log 2>&1 &
+server=$!
+trap 'kill "$server"' EXIT
+sleep 1
+
+for version in $SWIFT_SYNTAX_VERSIONS; do
+    probe="$ROOT/probe-$version"
+    mkdir -p "$probe/Sources/M" "$probe/Sources/L"
+    cat > "$probe/Package.swift" <<EOF
+// swift-tools-version: 6.0
+import CompilerPluginSupport
+import PackageDescription
+
+let package = Package(
+    name: "probe",
+    platforms: [.macOS(.v13)],
+    dependencies: [
+        .package(url: "https://github.com/swiftlang/swift-syntax", exact: "${version}"),
+    ],
+    targets: [
+        .macro(name: "M", dependencies: [
+            .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+            .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+        ]),
+        .target(name: "L", dependencies: ["M"]),
+    ]
+)
+EOF
+    echo 'import SwiftCompilerPlugin' > "$probe/Sources/M/M.swift"
+    echo '' > "$probe/Sources/L/L.swift"
+
+    trust=()
+    if [[ -n "${PREBUILTS_ROOT_CERT:-}" ]]; then
+        trust=(--experimental-prebuilts-root-cert "$PREBUILTS_ROOT_CERT")
+    fi
+    swift package \
+        "${trust[@]}" \
+        --package-path "$probe" \
+        --scratch-path "$probe/.build" \
+        --cache-path "$probe/.cache" \
+        --experimental-prebuilts-download-url "http://127.0.0.1:${port}" \
+        resolve -v > "$probe.log" 2>&1
+
+    if ! ls "$probe"/.build/prebuilts/swift-syntax/"$version"/*/lib/libMacroSupport.a \
+        > /dev/null 2>&1; then
+        echo "💔 Error: swift-syntax ${version} prebuilt was not accepted" >&2
+        grep -i 'prebuilt' "$probe.log" >&2 || true
+        exit 1
+    fi
+    echo "verified swift-syntax ${version} on $(uname -m)"
+done
