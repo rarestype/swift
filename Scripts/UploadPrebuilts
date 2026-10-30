@@ -1,0 +1,28 @@
+#!/bin/bash
+# Uploads prebuilts/ to get.rarestype.com/swift/prebuilts/. A manifest that is already
+# published is never replaced, since clients cache manifests and archives, and a rebuilt archive
+# never has the same checksum. Each archive goes up before the manifest that refers to it.
+set -euo pipefail
+: "${R2_ENDPOINT:?}"
+
+bucket="rarest"
+
+for manifest in prebuilts/swift-syntax/*/*.json; do
+    key="${manifest#prebuilts/}"
+    archive="${manifest%.json}-MacroSupport.tar.gz"
+
+    if aws s3api head-object --bucket "$bucket" --key "swift/prebuilts/${key}" \
+        --endpoint "$R2_ENDPOINT" > /dev/null 2>&1; then
+        echo "already published, skipping: ${key}"
+        continue
+    fi
+
+    aws s3 cp "$archive" "s3://${bucket}/swift/prebuilts/${archive#prebuilts/}" \
+        --endpoint "$R2_ENDPOINT" \
+        --content-type "application/gzip"
+    aws s3 cp "$manifest" "s3://${bucket}/swift/prebuilts/${key}" \
+        --endpoint "$R2_ENDPOINT" \
+        --content-type "application/json"
+
+    echo "published https://get.rarestype.com/swift/prebuilts/${key}"
+done

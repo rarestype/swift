@@ -1,0 +1,49 @@
+#!/bin/bash
+# Makes a throwaway root and signing certificate in $1, shaped like the ones in Certificates/,
+# so that pull requests can sign and verify prebuilts without the real signing key. Writes
+# `root.cer`, `signing.cer` and `signing.key.pem`; the root’s key is never written down.
+set -euo pipefail
+DIRECTORY=$1
+
+mkdir -p "$DIRECTORY"
+cd "$DIRECTORY"
+
+cat > root.cnf <<'CNF'
+[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = v3
+[dn]
+O = Rarest
+CN = Rarest Swift Prebuilts Test Root
+[v3]
+basicConstraints = critical, CA:true, pathlen:0
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+CNF
+cat > signing.cnf <<'CNF'
+[req]
+distinguished_name = dn
+prompt = no
+[dn]
+O = Rarest
+CN = Rarest Swift Prebuilts Test Signing
+[v3]
+basicConstraints = critical, CA:false
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, codeSigning
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid
+CNF
+
+root_key=$(mktemp)
+trap 'shred -u "$root_key"' EXIT
+openssl ecparam -name prime256v1 -genkey -noout -out "$root_key"
+openssl req -new -x509 -key "$root_key" -config root.cnf -days 2 -sha256 -out root.pem
+openssl ecparam -name prime256v1 -genkey -noout -out signing.key.pem
+openssl req -new -key signing.key.pem -config signing.cnf |
+    openssl x509 -req -CA root.pem -CAkey "$root_key" -CAcreateserial -days 1 -sha256 \
+        -extfile signing.cnf -extensions v3 -out signing.pem
+openssl x509 -in root.pem -outform der -out root.cer
+openssl x509 -in signing.pem -outform der -out signing.cer
+openssl verify -CAfile root.pem signing.pem

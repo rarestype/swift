@@ -20,9 +20,91 @@ jobs:
         with:
             swift-release: ${{ inputs.swift-release }}
 
-    publish:
+    #   the only job that sees the signing key, and it compiles nothing
+    sign:
         runs-on: ubuntu-24.04
         needs: build
+        steps:
+            -   name: 💝 Checkout 💝
+                uses: actions/checkout@v6
+
+            -   name: 💝 Download prebuilts 💝
+                uses: actions/download-artifact@v7
+                with:
+                    pattern: prebuilts-*
+                    merge-multiple: true
+                    path: prebuilts
+
+            -   name: 💝 Download prebuilts tool 💝
+                uses: actions/download-artifact@v7
+                with:
+                    name: tool-X64
+                    path: tool
+
+            -   name: 💝 Sign 💝
+                run: |
+                    chmod +x tool/swift-build-prebuilts
+                    Scripts/SignPrebuilts
+                env:
+                    PREBUILTS_SIGNING_KEY: ${{ secrets.PREBUILTS_SIGNING_KEY }}
+                    PREBUILTS_TOOL: tool/swift-build-prebuilts
+
+            -   name: 💝 Upload signed prebuilts 💝
+                uses: actions/upload-artifact@v7
+                with:
+                    name: signed-prebuilts
+                    path: prebuilts/
+                    retention-days: 1
+                    compression-level: 0
+
+    #   checks the signed prebuilts against the root certificate built into our SwiftPM
+    verify:
+        strategy:
+            matrix:
+                runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runs-on: ${{ matrix.runner }}
+        name: verify (${{ matrix.runner }})
+        needs: sign
+        env:
+            SWIFT_RELEASE: ${{ inputs.swift-release }}
+        steps:
+            -   name: 💝 Checkout 💝
+                uses: actions/checkout@v6
+
+            -   name: 💝 Read pins 💝
+                run: |
+                    source "Releases/${SWIFT_RELEASE}"
+                    echo "SWIFT_SYNTAX_VERSIONS=${SWIFT_SYNTAX_VERSIONS}" >> "$GITHUB_ENV"
+
+            -   name: 💝 Install Swift 💝
+                uses: rarestype/swift-install-action@v1
+                with:
+                    swift-release: ${{ inputs.swift-release }}
+
+            -   name: 💝 Download 💝
+                uses: actions/download-artifact@v7
+                with:
+                    name: swift-${{ runner.arch }}
+                    path: artifacts
+
+            -   name: 💝 Download signed prebuilts 💝
+                uses: actions/download-artifact@v7
+                with:
+                    name: signed-prebuilts
+                    path: prebuilts
+
+            -   name: 💝 Install over the toolchain 💝
+                run: |
+                    usr="$(dirname "$(dirname "$(readlink -f "$(command -v swift)")")")"
+                    tar -C "$(dirname "$usr")" -xzf artifacts/swift-*.tar.gz
+                    cat "$usr/share/swift/rarest-overlay.txt"
+
+            -   name: 💝 Verify prebuilts 💝
+                run: Scripts/VerifyPrebuilts
+
+    publish:
+        runs-on: ubuntu-24.04
+        needs: verify
         env:
             SWIFT_RELEASE: ${{ inputs.swift-release }}
             GH_TOKEN: ${{ github.token }}
@@ -36,6 +118,22 @@ jobs:
                     pattern: swift-*
                     merge-multiple: true
                     path: artifacts
+
+            -   name: 💝 Download signed prebuilts 💝
+                uses: actions/download-artifact@v7
+                with:
+                    name: signed-prebuilts
+                    path: prebuilts
+
+            -   name: 💝 Setup R2 💝
+                uses: rarestype/r2-setup-action@v1
+                with:
+                    cloudflare-account-id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+                    r2-access-key-id: ${{ secrets.R2_ACCESS_KEY }}
+                    r2-access-key: ${{ secrets.R2_ACCESS_SECRET }}
+
+            -   name: 💝 Upload prebuilts 💝
+                run: Scripts/UploadPrebuilts
 
             -   name: 💝 Release 💝
                 run: |
@@ -61,6 +159,8 @@ jobs:
                             echo "Swift ${SWIFT_RELEASE}, as Apple released it, with no upstream commits cherry-picked."
                         fi
                         echo ""
+                        echo "SwiftPM is built from rarestype/swift-package-manager@${SWIFTPM_REVISION}, and swift-syntax ${SWIFT_SYNTAX_VERSIONS// /, } prebuilts are published for it."
+                        echo ""
                         echo "| archive | checksum |"
                         echo "| ------- | -------- |"
                         for archive in artifacts/*.tar.gz; do
@@ -68,7 +168,7 @@ jobs:
                             echo "| [\`${name}\`](${download}/${name}) | \`$(sha256sum "$archive" | cut -d ' ' -f 1)\` |"
                         done
                         echo ""
-                        echo "Each archive replaces the compiler and standard library of Apple’s ${SWIFT_RELEASE} toolchain, when it is extracted over the toolchain’s \`usr\`."
+                        echo "Each archive replaces the compiler, standard library and SwiftPM of Apple’s ${SWIFT_RELEASE} toolchain, when it is extracted over the toolchain’s \`usr\`."
                     } > notes.md
 
                     gh release create "$tag" artifacts/*.tar.gz \

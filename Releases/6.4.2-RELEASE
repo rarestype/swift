@@ -2,3 +2,9 @@
 # line. Each must not be in the release yet, and each needs a reproducer in Tests/Reproducers.
 PATCHES="
 "
+
+# rarestype/swift-package-manager, branch rarest/6.4.2, which is the release plus
+# swiftlang/swift-package-manager#10404 and our prebuilts defaults
+SWIFTPM_REVISION=f160e78c891415dd389a655994d9c5b258d7c0d2
+# swift-syntax versions to build prebuilts for
+SWIFT_SYNTAX_VERSIONS="603.0.2 604.0.0"

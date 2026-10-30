@@ -10,7 +10,7 @@ on:
 
 jobs:
     #   builds the compiler and standard library, and packages the files that replace Apple’s
-    linux:
+    compiler:
         strategy:
             matrix:
                 runner: [ubuntu-24.04, ubuntu-24.04-arm]
@@ -80,10 +80,67 @@ jobs:
                     usr="$(dirname "$(dirname "$(readlink -f "$(command -v swift)")")")"
                     Scripts/Package /workspace "$usr"
 
-            -   name: 💝 Compare with Apple’s toolchain 💝
+            -   name: 💝 Upload 💝
+                uses: actions/upload-artifact@v7
+                with:
+                    name: compiler-${{ runner.arch }}
+                    path: artifacts/*.tar.gz
+                    retention-days: 1
+                    compression-level: 0
+
+    #   builds SwiftPM and the swift-syntax prebuilts with the compiler just built, and adds
+    #   SwiftPM to the archive
+    swiftpm:
+        strategy:
+            matrix:
+                runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runs-on: ${{ matrix.runner }}
+        name: swiftpm (${{ matrix.runner }})
+        needs: compiler
+        env:
+            SWIFT_RELEASE: ${{ inputs.swift-release }}
+        steps:
+            -   name: 💝 Checkout 💝
+                uses: actions/checkout@v6
+
+            -   name: 💝 Read pins 💝
+                run: |
+                    source "Releases/${SWIFT_RELEASE}"
+                    echo "SWIFTPM_REVISION=${SWIFTPM_REVISION}" >> "$GITHUB_ENV"
+                    echo "SWIFT_SYNTAX_VERSIONS=${SWIFT_SYNTAX_VERSIONS}" >> "$GITHUB_ENV"
+
+            -   name: 💝 Install patchelf 💝
+                run: |
+                    sudo apt-get update -q
+                    sudo apt-get -y -q install patchelf
+
+            -   name: 💝 Install Swift 💝
+                uses: rarestype/swift-install-action@v1
+                with:
+                    swift-release: ${{ inputs.swift-release }}
+
+            -   name: 💝 Download 💝
+                uses: actions/download-artifact@v7
+                with:
+                    name: compiler-${{ runner.arch }}
+                    path: artifacts
+
+            -   name: 💝 Install over the toolchain 💝
                 run: |
                     usr="$(dirname "$(dirname "$(readlink -f "$(command -v swift)")")")"
-                    Scripts/Compare stage/usr "$usr"
+                    tar -C "$(dirname "$usr")" -xzf artifacts/swift-*.tar.gz
+                    mkdir stage
+                    tar -C stage -xzf artifacts/swift-*.tar.gz
+                    swift --version
+
+            -   name: 💝 Build SwiftPM 💝
+                run: Scripts/BuildSwiftPM stage
+
+            -   name: 💝 Build prebuilts 💝
+                run: Scripts/BuildPrebuilts
+
+            -   name: 💝 Package 💝
+                run: Scripts/Archive stage
 
             -   name: 💝 Upload 💝
                 uses: actions/upload-artifact@v7
@@ -93,17 +150,40 @@ jobs:
                     retention-days: 7
                     compression-level: 0
 
-    #   installs the archive over Apple’s toolchain, as the images do, and runs the gate
+            -   name: 💝 Upload prebuilts 💝
+                uses: actions/upload-artifact@v7
+                with:
+                    name: prebuilts-${{ runner.arch }}
+                    path: prebuilts/
+                    retention-days: 7
+                    compression-level: 0
+
+            -   name: 💝 Upload prebuilts tool 💝
+                uses: actions/upload-artifact@v7
+                with:
+                    name: tool-${{ runner.arch }}
+                    path: swiftpm/.build/release/swift-build-prebuilts
+                    retention-days: 7
+
+    #   installs the archive over Apple’s toolchain, as the images do, and runs the gate. The
+    #   prebuilts are signed with a key made for this run, since the real one only signs releases
     test:
         strategy:
             matrix:
                 runner: [ubuntu-24.04, ubuntu-24.04-arm]
         runs-on: ${{ matrix.runner }}
         name: test (${{ matrix.runner }})
-        needs: linux
+        needs: swiftpm
+        env:
+            SWIFT_RELEASE: ${{ inputs.swift-release }}
         steps:
             -   name: 💝 Checkout 💝
                 uses: actions/checkout@v6
+
+            -   name: 💝 Read pins 💝
+                run: |
+                    source "Releases/${SWIFT_RELEASE}"
+                    echo "SWIFT_SYNTAX_VERSIONS=${SWIFT_SYNTAX_VERSIONS}" >> "$GITHUB_ENV"
 
             -   name: 💝 Install Swift 💝
                 uses: rarestype/swift-install-action@v1
@@ -116,6 +196,25 @@ jobs:
                     name: swift-${{ runner.arch }}
                     path: artifacts
 
+            -   name: 💝 Download prebuilts 💝
+                uses: actions/download-artifact@v7
+                with:
+                    name: prebuilts-${{ runner.arch }}
+                    path: prebuilts
+
+            -   name: 💝 Download prebuilts tool 💝
+                uses: actions/download-artifact@v7
+                with:
+                    name: tool-${{ runner.arch }}
+                    path: tool
+
+            -   name: 💝 Compare with Apple’s toolchain 💝
+                run: |
+                    usr="$(dirname "$(dirname "$(readlink -f "$(command -v swift)")")")"
+                    mkdir overlay
+                    tar -C overlay -xzf artifacts/swift-*.tar.gz
+                    Scripts/Compare overlay/usr "$usr"
+
             -   name: 💝 Install over the toolchain 💝
                 run: |
                     usr="$(dirname "$(dirname "$(readlink -f "$(command -v swift)")")")"
@@ -124,3 +223,18 @@ jobs:
 
             -   name: 💝 Test 💝
                 run: Scripts/Test
+
+            -   name: 💝 Sign prebuilts with a key for this run 💝
+                run: |
+                    chmod +x tool/swift-build-prebuilts
+                    Scripts/MakeTestCertificates test-certificates
+                    PREBUILTS_SIGNING_KEY="$(cat test-certificates/signing.key.pem)" \
+                        Scripts/SignPrebuilts
+                env:
+                    PREBUILTS_TOOL: tool/swift-build-prebuilts
+                    CERTIFICATES: test-certificates
+
+            -   name: 💝 Verify prebuilts 💝
+                run: Scripts/VerifyPrebuilts
+                env:
+                    PREBUILTS_ROOT_CERT: test-certificates/root.cer

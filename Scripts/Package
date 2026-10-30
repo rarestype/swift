@@ -1,13 +1,12 @@
 #!/bin/bash
 # Packages the files of $1/install/usr that also exist in the toolchain at $2 (its `usr`), and
 # so would replace them, as `artifacts/swift-<release>-linux-<arch>.tar.gz`, which installs
-# over a toolchain’s `usr`. Files that Apple’s toolchain doesn’t have stay out, so the archive
-# never adds anything except its manifest.
+# over a toolchain’s `usr`. Files that Apple’s toolchain doesn’t have stay out, so the
+# compiler and standard library never add anything except the manifest.
 set -euo pipefail
 : "${SWIFT_RELEASE:?}"
 INSTALL="$1/install/usr"
 APPLE=$2
-ARCH="$(uname -m)"
 ROOT="$PWD"
 
 (cd "$INSTALL" && find . \( -type f -o -type l \) | sort) > ours.txt
@@ -64,7 +63,4 @@ mkdir -p "$stage/share/swift"
     echo "Built by ${GITHUB_SERVER_URL:-}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
 } > "$stage/share/swift/rarest-overlay.txt"
 
-mkdir -p "$ROOT/artifacts"
-tar -C "$ROOT/stage" \
-    --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \
-    -czf "$ROOT/artifacts/swift-${SWIFT_RELEASE}-linux-${ARCH}.tar.gz" usr
+"$(dirname "$0")/Archive" "$ROOT/stage"

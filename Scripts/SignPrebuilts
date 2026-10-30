@@ -1,0 +1,26 @@
+#!/bin/bash
+# Signs every unsigned manifest under prebuilts/ with the key in $PREBUILTS_SIGNING_KEY and the
+# certificate chain in $CERTIFICATES (`Certificates` by default), with `swift-build-prebuilts`
+# at $PREBUILTS_TOOL.
+set -euo pipefail
+: "${PREBUILTS_SIGNING_KEY:?}" "${PREBUILTS_TOOL:?}"
+CERTIFICATES="${CERTIFICATES:-Certificates}"
+
+key=$(mktemp)
+trap 'shred -u "$key"' EXIT
+printf '%s\n' "$PREBUILTS_SIGNING_KEY" > "$key"
+
+"$PREBUILTS_TOOL" --stage-dir "$PWD/prebuilts" --sign \
+    --private-key-path "$key" \
+    --cert-chain-path "$CERTIFICATES/signing.cer" \
+    --cert-chain-path "$CERTIFICATES/root.cer"
+
+for unsigned in prebuilts/swift-syntax/*/*.unsigned; do
+    signed="${unsigned%.unsigned}.json"
+    if [[ ! -s "$signed" ]]; then
+        echo "💔 Error: ${unsigned} was not signed" >&2
+        exit 1
+    fi
+    rm "$unsigned"
+    echo "signed $(basename "$signed")"
+done

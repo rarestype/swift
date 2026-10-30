@@ -1,0 +1,11 @@
+#!/bin/bash
+# Packs $1/usr as `artifacts/swift-<release>-linux-<arch>.tar.gz`, which installs over a
+# toolchain’s `usr`, replacing an archive of the same name.
+set -euo pipefail
+: "${SWIFT_RELEASE:?}"
+STAGE=$1
+
+mkdir -p artifacts
+tar -C "$STAGE" \
+    --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \
+    -czf "artifacts/swift-${SWIFT_RELEASE}-linux-$(uname -m).tar.gz" usr

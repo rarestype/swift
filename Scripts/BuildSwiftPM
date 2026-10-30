@@ -1,0 +1,102 @@
+#!/bin/bash
+# Builds SwiftPM from rarestype/swift-package-manager at $SWIFTPM_REVISION, with the toolchain on
+# the PATH and against the same dependency revisions as Apple’s $SWIFT_RELEASE, and installs it
+# into $1/usr, the overlay being assembled. Also leaves `swift-build-prebuilts` in
+# `swiftpm/.build/release`.
+#
+# SwiftPM replaces Apple’s `swift-package`, which every other SwiftPM command links to, and the
+# Swift Build resource bundles in `share/pm`. The license files of every package linked into it
+# go into `share/swift-package-manager/licenses`, at their original paths.
+set -euo pipefail
+: "${SWIFT_RELEASE:?}" "${SWIFTPM_REVISION:?}"
+STAGE=$1
+TAG="swift-${SWIFT_RELEASE}"
+ROOT="$PWD"
+
+git init -q swiftpm
+git -C swiftpm fetch -q --depth 1 https://github.com/rarestype/swift-package-manager \
+    "$SWIFTPM_REVISION"
+git -C swiftpm checkout -q FETCH_HEAD
+
+cd swiftpm
+
+# SwiftPM’s manifest follows release branches for its swiftlang dependencies, which move ahead
+# of what the toolchain shipped. Pin each of them to the toolchain’s tag instead.
+swift package resolve
+
+jq -r '.pins[]
+    | select(.state.branch // "" | startswith("release/"))
+    | "\(.identity) \(.location)"' Package.resolved > "$ROOT/branch-pins"
+
+while read -r identity location; do
+    revision=$(git ls-remote "$location" "refs/tags/${TAG}" "refs/tags/${TAG}^{}" \
+        | tail -1 \
+        | cut -f 1)
+    if [[ -z "$revision" ]]; then
+        echo "💔 Error: ${location} has no tag ${TAG}" >&2
+        exit 1
+    fi
+    echo "pinning ${identity} to ${TAG} (${revision})"
+    jq --arg identity "$identity" --arg revision "$revision" \
+        '(.pins[] | select(.identity == $identity) | .state.revision) = $revision' \
+        Package.resolved > Package.resolved.new
+    mv Package.resolved.new Package.resolved
+done < "$ROOT/branch-pins"
+
+for product in swift-package-manager swift-build-prebuilts; do
+    swift build -c release --product "$product" --force-resolved-versions
+done
+
+# check that the build really used the pinned revisions
+while read -r identity location; do
+    expected=$(jq -r --arg identity "$identity" \
+        '.pins[] | select(.identity == $identity) | .state.revision' Package.resolved)
+    actual=$(git -C ".build/checkouts/$(basename "$location" .git)" rev-parse HEAD)
+    if [[ "$expected" != "$actual" ]]; then
+        echo "💔 Error: ${identity} is at ${actual}, expected ${expected}" >&2
+        exit 1
+    fi
+done < "$ROOT/branch-pins"
+
+# Apple’s binary finds the Swift runtime relative to itself, and one built here would otherwise
+# point at this machine’s toolchain
+binary=.build/release/swift-package-manager
+patchelf --set-rpath '$ORIGIN/../lib/swift/linux' "$binary"
+runpath=$(readelf -d "$binary" | sed -n 's/.*Library runpath: \[\(.*\)\]/\1/p')
+if [[ "$runpath" != '$ORIGIN/../lib/swift/linux' ]]; then
+    echo "💔 Error: unexpected runpath '${runpath}'" >&2
+    exit 1
+fi
+
+usr="$STAGE/usr"
+licenses="$usr/share/swift-package-manager/licenses"
+
+mkdir -p "$usr/bin" "$usr/share/pm" "$licenses"
+install -m 755 "$binary" "$usr/bin/swift-package"
+cp -R .build/release/*.bundle "$usr/share/pm/"
+
+collect_licenses() {
+    local source="$1"
+    local destination="$2"
+    mkdir -p "$destination"
+    (
+        cd "$source"
+        find . \( -name .git -o -name .build -o -name Tests -o -name Fixtures \) -prune \
+            -o -type f \( \
+            -name 'LICENSE' -o -name 'LICENSE.*' -o \
+            -name 'NOTICE' -o -name 'NOTICE.*' -o \
+            -name 'COPYING' -o -name 'COPYING.*' -o \
+            -name 'CONTRIBUTORS.txt' \
+        \) -print0 \
+            | xargs -0 -r cp --parents -t "$destination"
+    )
+}
+
+collect_licenses . "$licenses/swift-package-manager"
+for checkout in .build/checkouts/*; do
+    collect_licenses "$checkout" "$licenses/$(basename "$checkout")"
+done
+
+echo "SwiftPM from rarestype/swift-package-manager@${SWIFTPM_REVISION}" \
+    >> "$usr/share/swift/rarest-overlay.txt"
+echo "💖 SwiftPM ${SWIFT_RELEASE} (${SWIFTPM_REVISION}) built for $(uname -m)"
