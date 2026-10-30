@@ -1,0 +1,4 @@
+# Upstream commits cherry-picked onto the release, one `<swiftlang repository> <commit>` per
+# line. Each must not be in the release yet, and each needs a reproducer in Tests/Reproducers.
+PATCHES="
+"
