@@ -4,7 +4,8 @@
 # at $PREBUILTS_TOOL.
 set -euo pipefail
 : "${PREBUILTS_SIGNING_KEY:?}" "${PREBUILTS_TOOL:?}"
-CERTIFICATES="${CERTIFICATES:-Certificates}"
+CERTIFICATES=$(realpath "${CERTIFICATES:-Certificates}")
+PREBUILTS_TOOL=$(realpath "$PREBUILTS_TOOL")
 
 key=$(mktemp)
 trap 'shred -u "$key"' EXIT

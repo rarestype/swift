@@ -9,7 +9,7 @@
 # go into `share/swift-package-manager/licenses`, at their original paths.
 set -euo pipefail
 : "${SWIFT_RELEASE:?}" "${SWIFTPM_REVISION:?}"
-STAGE=$1
+STAGE=$(realpath "$1")
 TAG="swift-${SWIFT_RELEASE}"
 ROOT="$PWD"
 

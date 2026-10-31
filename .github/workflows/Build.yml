@@ -15,12 +15,16 @@ jobs:
             matrix:
                 runner: [ubuntu-24.04, ubuntu-24.04-arm]
         runs-on: ${{ matrix.runner }}
-        name: build (${{ matrix.runner }})
+        name: compiler (${{ matrix.runner }})
         timeout-minutes: 360
         env:
             SWIFT_RELEASE: ${{ inputs.swift-release }}
             GH_TOKEN: ${{ github.token }}
         steps:
+            #   runners of the same label can differ in CPU, which changes how long the build takes
+            -   name: 💝 Describe runner 💝
+                run: lscpu
+
             -   name: 💝 Checkout 💝
                 uses: actions/checkout@v6
 

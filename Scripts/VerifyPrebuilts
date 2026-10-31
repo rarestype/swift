@@ -42,7 +42,7 @@ EOF
 
     trust=()
     if [[ -n "${PREBUILTS_ROOT_CERT:-}" ]]; then
-        trust=(--experimental-prebuilts-root-cert "$PREBUILTS_ROOT_CERT")
+        trust=(--experimental-prebuilts-root-cert "$(realpath "$PREBUILTS_ROOT_CERT")")
     fi
     swift package \
         "${trust[@]}" \
