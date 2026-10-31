@@ -15,37 +15,5 @@ done
 
 mkdir -p prebuilts
 (cd prebuilts && "$tool" --stage-dir "$ROOT/prebuilts" --build "${versions[@]}")
-
-# swift-syntax’s license goes into each archive at its original location, the package
-# root, so the checksum recorded in the manifest has to be recomputed.
-for version in $SWIFT_SYNTAX_VERSIONS; do
-    directory="prebuilts/swift-syntax/$version"
-    license="$ROOT/LICENSE-swift-syntax-$version.txt"
-
-    curl -fsSL -o "$license" \
-        "https://raw.githubusercontent.com/swiftlang/swift-syntax/${version}/LICENSE.txt"
-
-    for archive in "$directory"/*-MacroSupport.tar.gz; do
-        manifest="${archive%-MacroSupport.tar.gz}.unsigned"
-        contents=$(mktemp -d)
-
-        tar -C "$contents" -xzf "$archive"
-        cp "$license" "$contents/LICENSE.txt"
-        (
-            cd "$contents"
-            tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \
-                -czf "$ROOT/$archive" -- *
-        )
-        rm -rf "$contents"
-
-        checksum=$(sha256sum "$archive" | cut -d ' ' -f 1)
-        jq --arg checksum "$checksum" '.libraries[0].checksum = $checksum' \
-            "$manifest" > "$manifest.new"
-        mv "$manifest.new" "$manifest"
-
-        echo "$(basename "$archive"): ${checksum}"
-    done
-done
-
 rm -rf prebuilts/src
 echo "💖 swift-syntax prebuilts built for $(uname -m)"

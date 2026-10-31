@@ -212,17 +212,13 @@ jobs:
                     name: tool-${{ runner.arch }}
                     path: tool
 
+            #   also installs the archive over the toolchain
             -   name: 💝 Compare with Apple’s toolchain 💝
                 run: |
                     usr="$(dirname "$(dirname "$(readlink -f "$(command -v swift)")")")"
                     mkdir overlay
                     tar -C overlay -xzf artifacts/swift-*.tar.gz
                     Scripts/Compare overlay/usr "$usr"
-
-            -   name: 💝 Install over the toolchain 💝
-                run: |
-                    usr="$(dirname "$(dirname "$(readlink -f "$(command -v swift)")")")"
-                    tar -C "$(dirname "$usr")" -xzf artifacts/swift-*.tar.gz
                     cat "$usr/share/swift/rarest-overlay.txt"
 
             -   name: 💝 Test 💝

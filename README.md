@@ -9,7 +9,7 @@ Each archive is extracted over the `usr` of Apple’s toolchain for the same rel
 
 SwiftPM comes from [rarestype/swift-package-manager](https://github.com/rarestype/swift-package-manager), which carries [swiftlang/swift-package-manager#10404](https://github.com/swiftlang/swift-package-manager/pull/10404), so that building a single product (`swift build --product`, `swift package js`) uses prebuilt swift-syntax instead of compiling it. It fetches prebuilts from `https://get.rarestype.com/swift/prebuilts`, and trusts [`Certificates/root.cer`](Certificates/root.cer) by default. It is built with the compiler from the same archive, and against the dependency revisions tagged for the release.
 
-The archive replaces Apple’s `swift-package`, which every other SwiftPM command links to, and the Swift Build resource bundles in `share/pm`. It adds the license files of every package linked into SwiftPM, under `share/swift-package-manager/licenses`, at their original paths.
+The archive replaces Apple’s `swift-package`, which every other SwiftPM command links to, and the Swift Build resource bundles in `share/pm`.
 
 The prebuilts are built with the same compiler, and signed by the `Deploy` workflow with the `PREBUILTS_SIGNING_KEY` secret, whose certificate chain is in `Certificates/`. A prebuilt that is already published is never replaced.
 
@@ -37,6 +37,6 @@ Each architecture builds on a standard GitHub runner, in about three hours, and 
 
 Before a release is published, for each architecture:
 
-- `Scripts/Compare` checks that the archive can replace Apple’s files. The standard library and runtime, which both builds compile with the compiler they just built, must export exactly the same symbols as Apple’s, and every module interface must have been compiled with the same flags. What the host compiler builds, such as `swift-frontend`, can’t match exactly, because Apple builds its compiler with an older host compiler and linker. So with the archive installed over a copy of Apple’s toolchain, every executable and library in it must still find every library and symbol it needs, and every runpath must stay inside the toolchain.
+- `Scripts/Compare` checks that the archive can replace Apple’s files. The standard library and runtime, which both builds compile with the compiler they just built, must export exactly the same symbols as Apple’s, and every module interface must have been compiled with the same flags. What the host compiler builds, such as `swift-frontend`, can’t match exactly, because Apple builds its compiler with an older host compiler and linker. So with the archive installed over Apple’s toolchain, every executable and library in it must still find every library and symbol it needs, and every runpath must stay inside the toolchain.
 - `Scripts/Test` installs the archive over Apple’s toolchain, as the images do. It runs each reproducer, optimized, and builds a package that uses a macro, to check that the compiler still runs macro plugins.
 - `Scripts/VerifyPrebuilts` checks that our SwiftPM downloads and unpacks the signed prebuilts for its architecture, from a local copy. In pull requests, the prebuilts are signed with a throwaway certificate chain from `Scripts/MakeTestCertificates`, which SwiftPM is told to trust. `Deploy` signs them with the real key, and checks them against the root certificate built into SwiftPM.
