@@ -1,12 +1,12 @@
 #!/bin/bash
 # Checks that the files in $1 (an overlay’s `usr`) can replace the same files in $2 (Apple’s
-# `usr`):
+# `usr`), and installs the overlay over $2:
 #
 # 1.  The standard library and runtime, which both builds compile with the compiler they just
 #     built, export exactly the same symbols as Apple’s, and every module interface was compiled
 #     with the same flags.
-# 2.  With the overlay installed over a copy of Apple’s toolchain, every executable and library in
-#     it still finds every symbol it imports. This covers what the host compiler builds, such as
+# 2.  With the overlay installed over Apple’s toolchain, every executable and library in it still
+#     finds every symbol it imports. This covers what the host compiler builds, such as
 #     `swift-frontend`, whose symbol tables depend on which host compiler built them; Apple’s
 #     were built by an older one.
 set -euo pipefail
@@ -70,11 +70,9 @@ undefined() {
         done | sort -u
 }
 
-mkdir -p "$WORK/merged"
-cp -a "$APPLE" "$WORK/merged/usr"
-cp -a "$OVERLAY/." "$WORK/merged/usr/"
 undefined "$APPLE" > "$WORK/apple.undefined"
-undefined "$WORK/merged/usr" > "$WORK/merged.undefined"
+cp -a "$OVERLAY/." "$APPLE/"
+undefined "$APPLE" > "$WORK/merged.undefined"
 comm -13 "$WORK/apple.undefined" "$WORK/merged.undefined" > "$WORK/new.undefined"
 if [[ -s "$WORK/new.undefined" ]]; then
     echo "💔 with the overlay installed, $(wc -l < "$WORK/new.undefined") imports no longer resolve:"

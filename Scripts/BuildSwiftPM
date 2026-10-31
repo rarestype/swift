@@ -5,11 +5,10 @@
 # `swiftpm/.build/release`.
 #
 # SwiftPM replaces Apple’s `swift-package`, which every other SwiftPM command links to, and the
-# Swift Build resource bundles in `share/pm`. The license files of every package linked into it
-# go into `share/swift-package-manager/licenses`, at their original paths.
+# Swift Build resource bundles in `share/pm`.
 set -euo pipefail
 : "${SWIFT_RELEASE:?}" "${SWIFTPM_REVISION:?}"
-STAGE=$1
+STAGE=$(realpath "$1")
 TAG="swift-${SWIFT_RELEASE}"
 ROOT="$PWD"
 
@@ -69,33 +68,10 @@ if [[ "$runpath" != '$ORIGIN/../lib/swift/linux' ]]; then
 fi
 
 usr="$STAGE/usr"
-licenses="$usr/share/swift-package-manager/licenses"
 
-mkdir -p "$usr/bin" "$usr/share/pm" "$licenses"
+mkdir -p "$usr/bin" "$usr/share/pm"
 install -m 755 "$binary" "$usr/bin/swift-package"
 cp -R .build/release/*.bundle "$usr/share/pm/"
-
-collect_licenses() {
-    local source="$1"
-    local destination="$2"
-    mkdir -p "$destination"
-    (
-        cd "$source"
-        find . \( -name .git -o -name .build -o -name Tests -o -name Fixtures \) -prune \
-            -o -type f \( \
-            -name 'LICENSE' -o -name 'LICENSE.*' -o \
-            -name 'NOTICE' -o -name 'NOTICE.*' -o \
-            -name 'COPYING' -o -name 'COPYING.*' -o \
-            -name 'CONTRIBUTORS.txt' \
-        \) -print0 \
-            | xargs -0 -r cp --parents -t "$destination"
-    )
-}
-
-collect_licenses . "$licenses/swift-package-manager"
-for checkout in .build/checkouts/*; do
-    collect_licenses "$checkout" "$licenses/$(basename "$checkout")"
-done
 
 echo "SwiftPM from rarestype/swift-package-manager@${SWIFTPM_REVISION}" \
     >> "$usr/share/swift/rarest-overlay.txt"

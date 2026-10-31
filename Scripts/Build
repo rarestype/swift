@@ -17,7 +17,7 @@ unset CPLUS_INCLUDE_PATH C_INCLUDE_PATH OBJC_INCLUDE_PATH OBJCPLUS_INCLUDE_PATH 
     --build-swift-static-stdlib \
     --build-swift-static-sdk-overlay \
     --install-swift \
-    --swift-install-components='autolink-driver;compiler;clang-resource-dir-symlink;libexec;stdlib;swift-remote-mirror;sdk-overlay;static-mirror-lib;toolchain-tools;license;sourcekit-inproc' \
+    --swift-install-components='autolink-driver;compiler;clang-resource-dir-symlink;libexec;stdlib;swift-remote-mirror;sdk-overlay;static-mirror-lib;toolchain-tools;sourcekit-inproc' \
     --install-prefix=/usr \
     --install-destdir="$SOURCES/install" \
     --jobs "$(nproc)"

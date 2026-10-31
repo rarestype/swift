@@ -25,6 +25,12 @@ jobs:
         runs-on: ubuntu-24.04
         needs: build
         steps:
+            #   `swift-build-prebuilts` links the Swift runtime from where the toolchain is installed
+            -   name: 💝 Install Swift 💝
+                uses: rarestype/swift-install-action@v1
+                with:
+                    swift-release: ${{ inputs.swift-release }}
+
             -   name: 💝 Checkout 💝
                 uses: actions/checkout@v6
 
