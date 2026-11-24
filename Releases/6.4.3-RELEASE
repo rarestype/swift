@@ -1,0 +1,10 @@
+# Upstream commits cherry-picked onto the release, one `<swiftlang repository> <commit>` per
+# line. Each must not be in the release yet, and each needs a reproducer in Tests/Reproducers.
+PATCHES="
+"
+
+# rarestype/swift-package-manager, branch rarest/6.4.3, which is the release plus
+# swiftlang/swift-package-manager#10404 and our prebuilts defaults
+SWIFTPM_REVISION=97d03ee88cd480f54470764239e9d4ea93f0e6b6
+# swift-syntax versions to build prebuilts for
+SWIFT_SYNTAX_VERSIONS="603.0.2 604.0.0"
